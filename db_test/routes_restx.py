@@ -1,8 +1,9 @@
 from flask_restx import Model, ValidationError
 
 from db_test import (wraps, generate_password_hash, check_password_hash, Resource,
-    jwt, jwt_required, get_jwt, get_jwt_identity, create_access_token, 
-    NoAuthorizationError, InvalidSignatureError, RevokedTokenError, DecodeError, 
+    jwtm, jwt_required, get_jwt, get_jwt_identity, create_access_token, 
+    NoAuthorizationError, InvalidSignatureError, RevokedTokenError, DecodeError, InvalidHeaderError,
+    JWTDecodeError,
     app, db, ns_auth, ns_suppl, ns_roles, ns_users, ns_rooms, ns_presentations, ns_schedule, ns_presenters)
 
 from db_test.apimodels import *
@@ -21,29 +22,35 @@ def return_method_not_allowed_error(error):
         'status': 'the selected method is disallowed for this URL.'
     }, 405
 
-@app.errorhandler(NoAuthorizationError)
+@app.errorhandler(NoAuthorizationError)     # missing Authorization header
 def return_auth_failed_error(error):
     return {
         'status': f'unauthenticated request. error message: {str(error)}'
     }, 401
 
-@app.errorhandler(InvalidSignatureError)
+@app.errorhandler(InvalidSignatureError)    # signature verification failed
 def return_auth_failed_error(error):
     return {
         'status': f'unauthenticated request. error message: {str(error)}'
     }, 401
 
-@app.errorhandler(RevokedTokenError)
+@app.errorhandler(InvalidHeaderError)       # missing Bearer in 'Authorization' header
 def return_auth_failed_error(error):
     return {
         'status': f'unauthenticated request. error message: {str(error)}'
     }, 401
 
-@app.errorhandler(DecodeError)
+@app.errorhandler(RevokedTokenError)        # expired/revoked token
+def return_auth_failed_error(error):
+    return {
+        'status': f'unauthenticated request. error message: {str(error)}'
+    }, 401
+
+@app.errorhandler(DecodeError)              # any decoding errors (i.e. not enough segments)
 def return_auth_failed_error(error):
     return {
         'status': f'invalid token structure. error message: {str(error)}'
-    }, 422
+    }, 401
 
 # NB: This workaround leverages cases of custom flask-restx errorhandlers being overriden 
 # by the native flask/werkzeug errorhandler, which were first noticed within payload 
@@ -64,13 +71,19 @@ def return_auth_failed_error(error):
 
 
 # check for token validity.
-@jwt.token_in_blocklist_loader
+@jwtm.token_in_blocklist_loader
 def check_if_token_revoked(jwt_header, jwt_payload):
     """Searches the invalidated tokens database for the provided token's jti."""
 
     jti = jwt_payload['jti']
     token = db.session.query(TokenBlocklist.id).filter_by(jti = jti).scalar()
     return token is not None
+
+@jwtm.expired_token_loader
+def check_if_token_expired(jwt_header, jwt_payload):
+    return {
+        'status': 'Token has expired; request a new one via /authorisation.'
+    }, 401
 
 
 
@@ -81,7 +94,7 @@ def check_if_token_revoked(jwt_header, jwt_payload):
 def elevated_permissions_required():
     """A decorator to protect routes that are to be accessed by Admins or Presenters.
 
-    Invokes :func:`jwt_required` to receive the JWT and :func:`get_jwt_identity` to parse 
+    Invokes :func:`jwt_required()` to receive the JWT and :func:`get_jwt_identity()` to parse 
     its claims for the role assigned. If the said role is Admin or Presenter, grant access and 
     return the args passed; otherwise, return a 403 forbidden status code along with an error
     message.
@@ -104,8 +117,8 @@ def elevated_permissions_required():
 def admin_permissions_required():
     """A decorator to protect routes that are exclusively available to Admins.
 
-    Operates the same way :func:`elevated_permissions_required` does, yet only grants access to 
-    Admins. Invokes :func:`jwt_required` to receive the JWT and :func:`get_jwt_identity` to parse 
+    Operates the same way :func:`elevated_permissions_required()` does, yet only grants access to 
+    Admins. Invokes :func:`jwt_required()` to receive the JWT and :func:`get_jwt_identity()` to parse 
     its claims for the role assigned. If the said role is Admin, grant access and 
     return the args passed; otherwise, return a 403 forbidden status code along with an error
     message.
@@ -130,7 +143,7 @@ def get_permissions():
     
     Used by more fine-tuned functions that rely on current user's precise identifiers
     (id and login) to further process a request, as opposed to mere role-based permission
-    issuance. An example of this is when :meth:`UserById.put` gets invoked and has to discriminate
+    issuance. An example of this is when :meth:`UserById.put()` gets invoked and has to discriminate
     between updating the token-bearing user's parameters or those of another user.
     """
 
@@ -150,11 +163,12 @@ def get_permissions():
 
 
 #==============================================================
-# // AUTHENTICATION / AUTHORISATION, USER REG
+# // AUTHENTICATION / AUTHORISATION / USER REG
 #==============================================================
 
 # user authentication and authorisation. retrieve user's identity and grant respective role-based permissions.
 #   todos: -implement refresh token functionality.
+#          -add "/authorisation"-bound redirects for expired/revoked JWTs.
 
 # logs the user in, issues a JWT upon credentials validation.
 @ns_auth.route('', doc = {'description': 'Issues an access JWToken for a matched credentials pair.'})
@@ -165,7 +179,7 @@ class Auth(Resource):
         description = 'Checks the credentials passed in the request body against those in the database.',
         responses = {
             200: 'Returned upon successful credentials validation along with a token generated.',
-            401: 'Returned if user credentials validation failed.',
+            401: 'Returned if user credentials validation failed or token structure was invalid.',
             400: 'Returned upon model validation failure.',
             404: 'Returned if a user record with the provided login was not retrieved from the database.'
         }
@@ -219,7 +233,7 @@ class Logout(Resource):
         security = 'Bearer',
         responses = {
             200: 'Returned upon JWT blocklisting and successful logout.',
-            401: 'Returned if the JWT has been revoked earlier.',
+            401: 'Returned if the JWT has been revoked earlier or upon initial auth failure.',
             422: 'Returned if detected a token structure violation or failed to decode.'
         }
     )
@@ -307,7 +321,8 @@ class Roles(Resource):
         description = 'Retrieves a list of roles defined for the system.',
         security = 'Bearer',
         responses = {
-            200: 'Returned upon successful roles registry retrieval.'
+            200: 'Returned upon successful roles registry retrieval.',
+            401: 'Returned for an unauthenticated request.'
         }
     )
     @jwt_required()
@@ -625,8 +640,7 @@ class Rooms(Resource):
             201: 'Returned upon successfully added room.',
             400: 'Returned upon model validation failure.',
             401: 'Returned for unauthenticated requests.',
-            403: 'Returned for an unauthorised request due to role violation.',
-            409: 'Returned for a conflicting record due to unique constrain violation.'
+            403: 'Returned for an unauthorised request due to role violation.'
         }
     )
     @jwt_required()
@@ -756,8 +770,7 @@ class Presentations(Resource):
             201: 'Returned upon successfully adding a new room.',
             400: 'Returned upon model validation failure.',
             401: 'Returned for an unauthenticated request.',
-            403: 'Returned for an unauthorised request due to role violation.',
-            409: 'Returned for a conflict detected.'
+            403: 'Returned for an unauthorised request due to role violation.'
         }
     )
     @jwt_required()
@@ -784,11 +797,11 @@ class Presentations(Resource):
         }, resp['status_code']
 
 @ns_presentations.route('/<int:id>', doc = {'description': 'Presentation-related operations.'})
-@ns_schedule.param('id', 'An id to access the presentation record by, must be an integer.')
+@ns_presentations.param('id', 'An id to access the presentation record by, must be an integer.')
 class PresentationById(Resource):
 
     # edit presentation data for an Admin/Presenter-authorised request, throw a 403 otherwise.
-    @ns_presenters.param('payload', 'Attributes and values to override a presentation with must be compliant with this model.', _in = 'body')
+    @ns_presentations.param('payload', 'Attributes and values to override a presentation with must be compliant with this model.', _in = 'body')
     @ns_presentations.doc(
         description = 'Edits a presentation record.',
         security = 'Bearer',

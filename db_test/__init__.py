@@ -5,8 +5,9 @@ from functools import wraps
 from flask import Flask # jsonify, make_response, url_for, redirect
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import JWTManager, create_access_token, get_jwt, get_jwt_identity, jwt_required
-from flask_jwt_extended.exceptions import NoAuthorizationError, RevokedTokenError
-from jwt.exceptions import InvalidSignatureError, DecodeError
+from flask_jwt_extended.exceptions import (NoAuthorizationError, RevokedTokenError, JWTDecodeError, 
+    JWTExtendedException, InvalidHeaderError) # UserClaimsVerificationError,
+from jwt import InvalidSignatureError, DecodeError
 from flask_restx import Api, Namespace, Resource, fields, reqparse
 
 import sqlite3
@@ -48,7 +49,7 @@ api = Api(
         repo @ http://github.com/nspon
     """,
     doc = '/',
-    authorizations = authorizations,
+    authorizations = authorizations
 )
 
 # API namespaces 
@@ -73,7 +74,7 @@ app.config['JWT_HEADER_NAME'] = 'Authorization'
 app.config['JWT_HEADER_TYPE'] = 'Bearer'
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(minutes = 15)
 
-jwt = JWTManager(app)
+jwtm = JWTManager(app)
 db = SQLAlchemy(app)
 
 from db_test.data_controls import (list_table_attrs, output_roles_json, output_users_json, 

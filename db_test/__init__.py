@@ -65,6 +65,7 @@ ns_suppl = api.namespace('supplementary', description = 'Manages supplementary o
 # app config parameters
 app.config['SECRET_KEY'] = 'cf0c80c9e0897a28b04a7a3bcc921c7b743bbfbf66ccb02d883013ea415094f9'
 app.config['JSON_SORT_KEYS'] = False
+app.config['PROPAGATE_EXCEPTIONS'] = True
 
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:////inv_tokens_database.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False

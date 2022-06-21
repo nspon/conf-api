@@ -647,7 +647,6 @@ class Rooms(Resource):
     @admin_permissions_required()
     @ns_rooms.expect(apimodel_room_post, validate = True)
 
-
     def post(self):
 
         payload = ns_rooms.payload
@@ -1068,7 +1067,7 @@ class Presenters(Resource):
         } 
     )
     @jwt_required()
-    @ns_presenters.expect(parser_presenters_get)
+    @ns_presenters.expect(parser_presenters_get, validate = True)
     
     def get(self):
         params = parser_schedule_get.parse_args()

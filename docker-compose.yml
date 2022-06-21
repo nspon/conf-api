@@ -1,0 +1,11 @@
+version: "3.9"
+services:
+  app:
+    # image: nspon/conf_api
+    build: .
+    volumes:
+      - cdb:/app
+    ports:
+      - "8000:5000"
+volumes:
+  cdb:
